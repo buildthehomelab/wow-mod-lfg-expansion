@@ -1,0 +1,73 @@
+// Logic test for the mod-lfg-expansion rules. No AzerothCore -- only the rules.
+#include "lfg_expansion_rules.h"
+
+#include <cstdio>
+
+using namespace LfgExpansion;
+
+static int g_fail = 0;
+
+static void Expect(char const* what, bool got, bool want)
+{
+    bool const ok = got == want;
+    if (!ok)
+        ++g_fail;
+    std::printf("%-66s %-7s %s\n", what, got ? "locked" : "open", ok ? "ok" : "FAIL");
+}
+
+static void ExpectN(char const* what, unsigned got, unsigned want)
+{
+    bool const ok = got == want;
+    if (!ok)
+        ++g_fail;
+    std::printf("%-66s %-7u %s\n", what, got, ok ? "ok" : "FAIL");
+}
+
+int main()
+{
+    Settings const def;
+    constexpr int NOT_IP = -1;
+
+    std::printf("--- a player's expansion ---\n");
+    ExpectN("level 58, no IP", PlayerExpansion(def, 58, NOT_IP), EXPANSION_CLASSIC);
+    ExpectN("level 60, no IP -> vanilla", PlayerExpansion(def, 60, NOT_IP), EXPANSION_CLASSIC);
+    ExpectN("level 61, no IP -> TBC", PlayerExpansion(def, 61, NOT_IP), EXPANSION_TBC);
+    ExpectN("level 70, no IP -> TBC", PlayerExpansion(def, 70, NOT_IP), EXPANSION_TBC);
+    ExpectN("level 71, no IP -> WotLK", PlayerExpansion(def, 71, NOT_IP), EXPANSION_WOTLK);
+    ExpectN("level 60, IP vanilla", PlayerExpansion(def, 60, EXPANSION_CLASSIC), EXPANSION_CLASSIC);
+    ExpectN("level 60, IP TBC (Naxx40 cleared) -> TBC", PlayerExpansion(def, 60, EXPANSION_TBC), EXPANSION_TBC);
+    ExpectN("level 70, IP WotLK (Sunwell cleared) -> WotLK", PlayerExpansion(def, 70, EXPANSION_WOTLK), EXPANSION_WOTLK);
+    ExpectN("level 65, IP vanilla (impossible) -> level is the floor", PlayerExpansion(def, 65, EXPANSION_CLASSIC), EXPANSION_TBC);
+    { Settings s; s.classicMaxLevel = 58;
+      ExpectN("ClassicMaxLevel 58: level 59, no IP -> TBC", PlayerExpansion(s, 59, NOT_IP), EXPANSION_TBC); }
+
+    std::printf("\n--- specific dungeons ---\n");
+    Expect("vanilla -> Hellfire Ramparts", IsPlayerLocked(def, EXPANSION_CLASSIC, EXPANSION_TBC, false), true);
+    Expect("vanilla -> Stratholme", IsPlayerLocked(def, EXPANSION_CLASSIC, EXPANSION_CLASSIC, false), false);
+    Expect("TBC -> Utgarde Keep", IsPlayerLocked(def, EXPANSION_TBC, EXPANSION_WOTLK, false), true);
+    Expect("TBC -> Ramparts", IsPlayerLocked(def, EXPANSION_TBC, EXPANSION_TBC, false), false);
+    Expect("WotLK -> Stratholme (older is always open)", IsPlayerLocked(def, EXPANSION_WOTLK, EXPANSION_CLASSIC, false), false);
+    // The client would grey out a locked random, and then 59-60 could not queue random at all.
+    Expect("vanilla -> the Random Burning Crusade entry (swapped instead)", IsPlayerLocked(def, EXPANSION_CLASSIC, EXPANSION_TBC, true), false);
+    { Settings s; s.enabled = false; Expect("Enable 0: vanilla -> Ramparts", IsPlayerLocked(s, EXPANSION_CLASSIC, EXPANSION_TBC, false), false); }
+
+    std::printf("\n--- random dungeon on queue ---\n");
+    // The symptom: a level 60 was offered, and got, TBC dungeons.
+    ExpectN("vanilla queues Random BC -> Random Classic", RandomFor(def, RDF_TBC, EXPANSION_CLASSIC), RDF_CLASSIC);
+    ExpectN("TBC queues Random BC -> unchanged", RandomFor(def, RDF_TBC, EXPANSION_TBC), RDF_TBC);
+    ExpectN("TBC queues Random Lich King -> Random BC", RandomFor(def, RDF_WOTLK, EXPANSION_TBC), RDF_TBC);
+    ExpectN("TBC queues Random LK Heroic -> Random BC Heroic", RandomFor(def, RDF_WOTLK_HEROIC, EXPANSION_TBC), RDF_TBC_HEROIC);
+    ExpectN("vanilla queues Random BC Heroic -> Random Classic", RandomFor(def, RDF_TBC_HEROIC, EXPANSION_CLASSIC), RDF_CLASSIC);
+    ExpectN("WotLK queues Random LK -> unchanged", RandomFor(def, RDF_WOTLK, EXPANSION_WOTLK), RDF_WOTLK);
+    ExpectN("WotLK queues Random Classic -> unchanged (never up)", RandomFor(def, RDF_CLASSIC, EXPANSION_WOTLK), RDF_CLASSIC);
+    ExpectN("unknown random 999 -> unchanged", RandomFor(def, 999, EXPANSION_CLASSIC), 999u);
+    { Settings s; s.enabled = false; ExpectN("Enable 0: vanilla Random BC -> unchanged", RandomFor(s, RDF_TBC, EXPANSION_CLASSIC), RDF_TBC); }
+
+    std::printf("\n--- group ---\n");
+    ExpectN("TBC leader + vanilla member -> vanilla", GroupExpansion({ EXPANSION_TBC, EXPANSION_CLASSIC }), EXPANSION_CLASSIC);
+    ExpectN("WotLK + TBC + WotLK -> TBC", GroupExpansion({ EXPANSION_WOTLK, EXPANSION_TBC, EXPANSION_WOTLK }), EXPANSION_TBC);
+    ExpectN("solo WotLK", GroupExpansion({ EXPANSION_WOTLK }), EXPANSION_WOTLK);
+
+    std::printf("\n%s\n", g_fail ? "FAILED" : "all ok");
+    return g_fail ? 1 : 0;
+}

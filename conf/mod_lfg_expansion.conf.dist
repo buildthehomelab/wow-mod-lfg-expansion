@@ -1,0 +1,35 @@
+[worldserver]
+
+#
+#    LfgExpansion.Enable
+#        Description: The Dungeon Finder never sends a player to a dungeon from
+#                     an expansion they have not reached. A character's
+#                     expansion is its mod-individual-progression tier if IP
+#                     is installed and controls the account, otherwise its
+#                     level. A random dungeon from a later expansion is swapped
+#                     on queue for the group's own (a level 60 who picks
+#                     Random Burning Crusade queues for Random Classic), and
+#                     specific dungeons from a later expansion are shown as
+#                     locked.
+#        Default:     1 (enabled)
+#
+
+LfgExpansion.Enable = 1
+
+#
+#    LfgExpansion.ClassicMaxLevel
+#        Description: Highest level in vanilla. A character without an IP tier
+#                     is vanilla up to and including this level.
+#        Default:     60
+#
+
+LfgExpansion.ClassicMaxLevel = 60
+
+#
+#    LfgExpansion.TbcMaxLevel
+#        Description: Highest level in TBC. A character without an IP tier is
+#                     TBC up to and including this level, WotLK above it.
+#        Default:     70
+#
+
+LfgExpansion.TbcMaxLevel = 70
