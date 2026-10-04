@@ -2,6 +2,7 @@
 #include "lfg_expansion_rules.h"
 
 #include <cstdio>
+#include <vector>
 
 using namespace LfgExpansion;
 
@@ -23,12 +24,87 @@ static void ExpectN(char const* what, unsigned got, unsigned want)
     std::printf("%-66s %-7u %s\n", what, got, ok ? "ok" : "FAIL");
 }
 
+static void ExpectProposal(char const* what, Settings const& s, std::initializer_list<QueueEntry> entries, bool wantRejected)
+{
+    std::vector<QueueEntry> const v(entries);
+    Expect(what, !IsProposalAllowed(s, v), wantRejected);
+}
+
+// Queue entries in a proposal: a player alone, a group, a random bot alone.
+static QueueEntry Solo(uint8_t tier)
+{
+    QueueEntry e;
+    e.hasPlayers = true;
+    e.lowestTier = e.highestTier = tier;
+    return e;
+}
+
+static QueueEntry Party(uint8_t lowest, uint8_t highest, uint8_t botLevel = 0)
+{
+    QueueEntry e = Solo(lowest);
+    e.highestTier = highest;
+    e.highestBotLevel = botLevel;
+    return e;
+}
+
+static QueueEntry Bot(uint8_t level)
+{
+    QueueEntry e;
+    e.highestBotLevel = level;
+    return e;
+}
+
+static QueueEntry Seasonal(QueueEntry e)
+{
+    e.seasonal = true;
+    return e;
+}
+
 int main()
 {
     Settings const def;
     constexpr int NOT_IP = -1;
 
-    std::printf("--- a player's expansion ---\n");
+    std::printf("--- random bots in a proposal (locked = rejected) ---\n");
+    // The symptom: a vanilla player in Stratholme got level 61-65 bots.
+    ExpectProposal("vanilla + random bot 60", def, { Solo(EXPANSION_CLASSIC), Bot(60) }, false);
+    ExpectProposal("vanilla + random bot 61", def, { Solo(EXPANSION_CLASSIC), Bot(61) }, true);
+    ExpectProposal("vanilla + random bots 58, 59, 65", def, { Solo(EXPANSION_CLASSIC), Bot(58), Bot(59), Bot(65) }, true);
+    ExpectProposal("IP TBC at level 60 + random bot 61", def, { Solo(PlayerExpansion(def, 60, EXPANSION_TBC)), Bot(61) }, false);
+    ExpectProposal("TBC + random bot 70", def, { Solo(EXPANSION_TBC), Bot(70) }, false);
+    ExpectProposal("TBC + random bot 71", def, { Solo(EXPANSION_TBC), Bot(71) }, true);
+    ExpectProposal("WotLK + random bot 80", def, { Solo(EXPANSION_WOTLK), Bot(80) }, false);
+    // Accounts without IP: the level decides.
+    ExpectProposal("no IP, level 60 + random bot 61", def, { Solo(PlayerExpansion(def, 60, NOT_IP)), Bot(61) }, true);
+    ExpectProposal("no IP, level 61 + random bot 65", def, { Solo(PlayerExpansion(def, 61, NOT_IP)), Bot(65) }, false);
+
+    std::printf("\n--- mixed expansions ---\n");
+    ExpectN("BotTier without a key -> lowest", def.botTier, BOT_TIER_LOWEST);
+    ExpectProposal("vanilla + TBC queued apart + random bot 61", def, { Solo(EXPANSION_CLASSIC), Solo(EXPANSION_TBC), Bot(61) }, true);
+    ExpectProposal("vanilla/TBC group + random bot 61", def, { Party(EXPANSION_CLASSIC, EXPANSION_TBC), Bot(61) }, true);
+    ExpectProposal("vanilla + WotLK queued apart + random bot 75", def, { Solo(EXPANSION_CLASSIC), Solo(EXPANSION_WOTLK), Bot(75) }, true);
+    {
+        Settings s;
+        s.botTier = BOT_TIER_HIGHEST;
+        ExpectProposal("BotTier 1: vanilla + TBC queued apart + random bot 61", s, { Solo(EXPANSION_CLASSIC), Solo(EXPANSION_TBC), Bot(61) }, false);
+        ExpectProposal("BotTier 1: vanilla/TBC group + random bot 61", s, { Party(EXPANSION_CLASSIC, EXPANSION_TBC), Bot(61) }, false);
+        ExpectProposal("BotTier 1: vanilla + TBC + random bot 71", s, { Solo(EXPANSION_CLASSIC), Solo(EXPANSION_TBC), Bot(71) }, true);
+        ExpectProposal("BotTier 1: vanilla + WotLK + random bot 75", s, { Solo(EXPANSION_CLASSIC), Solo(EXPANSION_WOTLK), Bot(75) }, false);
+    }
+
+    std::printf("\n--- exceptions ---\n");
+    // The seasonal bosses are vanilla/TBC in LFGDungeons.dbc but level 78-82.
+    ExpectProposal("seasonal boss: vanilla + random bot 80", def, { Seasonal(Solo(EXPANSION_CLASSIC)), Seasonal(Bot(80)) }, false);
+    ExpectProposal("seasonal boss on the bot's entry only", def, { Solo(EXPANSION_CLASSIC), Seasonal(Bot(80)) }, false);
+    // A random bot you invited yourself is your own choice.
+    ExpectProposal("vanilla group with an invited random bot 65", def, { Party(EXPANSION_CLASSIC, EXPANSION_CLASSIC, 65) }, false);
+    ExpectProposal("vanilla group with an invited random bot 65 + random bot 61", def, { Party(EXPANSION_CLASSIC, EXPANSION_CLASSIC, 65), Bot(61) }, true);
+    ExpectProposal("random bots only (playerbots rejects those itself)", def, { Bot(61), Bot(80) }, false);
+    ExpectProposal("no known entries", def, { }, false);
+    { Settings s; s.botLock = false; ExpectProposal("BotLock 0: vanilla + random bot 80", s, { Solo(EXPANSION_CLASSIC), Bot(80) }, false); }
+    { Settings s; s.enabled = false; ExpectProposal("Enable 0: vanilla + random bot 80", s, { Solo(EXPANSION_CLASSIC), Bot(80) }, false); }
+
+    std::printf("\n--- a player's expansion ---\n");
     ExpectN("level 58, no IP", PlayerExpansion(def, 58, NOT_IP), EXPANSION_CLASSIC);
     ExpectN("level 60, no IP -> vanilla", PlayerExpansion(def, 60, NOT_IP), EXPANSION_CLASSIC);
     ExpectN("level 61, no IP -> TBC", PlayerExpansion(def, 61, NOT_IP), EXPANSION_TBC);

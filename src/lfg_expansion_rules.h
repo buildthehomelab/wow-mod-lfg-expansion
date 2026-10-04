@@ -1,7 +1,7 @@
 #pragma once
 
-// The rules for which expansion the Dungeon Finder may send a player to,
-// without a single AzerothCore type. The module translates Player, Group and
+// The rules for which expansion the Dungeon Finder may send a player or a
+// random bot to, without a single AzerothCore type. The module translates Player, Group and
 // LFGDungeonData into the arguments below, so the whole decision can be tested
 // with g++ alone (test/run.sh).
 //
@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <vector>
 
 namespace LfgExpansion
 {
@@ -33,12 +34,83 @@ namespace LfgExpansion
     constexpr uint32_t RDF_WOTLK        = 261;
     constexpr uint32_t RDF_WOTLK_HEROIC = 262;
 
+    // Which expansion random bots follow when the players in a proposal are
+    // in different ones (LfgExpansion.BotTier).
+    constexpr uint8_t BOT_TIER_LOWEST  = 0;
+    constexpr uint8_t BOT_TIER_HIGHEST = 1;
+
     struct Settings
     {
         bool enabled = true;
+        bool botLock = true;    // random bots are held to the players' expansion
+        uint8_t botTier = BOT_TIER_LOWEST;
         uint8_t classicMaxLevel = 60;
         uint8_t tbcMaxLevel = 70;
     };
+
+    // Highest level in an expansion, or 0 for none: WotLK (and anything newer)
+    // has no cap.
+    inline uint8_t MaxLevelFor(Settings const& s, uint8_t expansion)
+    {
+        switch (expansion)
+        {
+            case EXPANSION_CLASSIC: return s.classicMaxLevel;
+            case EXPANSION_TBC:     return s.tbcMaxLevel;
+            default:                return 0;
+        }
+    }
+
+    // --- random bots (only with mod-playerbots) ------------------------------
+
+    // A queue entry in an LFG proposal: a player alone or a group, stored when
+    // it queued.
+    struct QueueEntry
+    {
+        bool hasPlayers = false;                  // at least one who is not a random bot
+        uint8_t lowestTier = EXPANSION_WOTLK;     // among them
+        uint8_t highestTier = EXPANSION_CLASSIC;
+        uint8_t highestBotLevel = 0;              // highest random bot in the entry
+        bool seasonal = false;                    // queued for seasonal bosses only
+    };
+
+    // Random bots follow the expansion of the real players in the proposal,
+    // not their own level: with a vanilla player at most 60, with a TBC player
+    // at most 70. Only entries without a player are checked -- a random bot
+    // you invited yourself is your own choice. The seasonal bosses are listed
+    // as vanilla/TBC in LFGDungeons.dbc but are level 78-82.
+    inline bool IsProposalAllowed(Settings const& s, std::vector<QueueEntry> const& entries)
+    {
+        if (!s.enabled || !s.botLock)
+            return true;
+
+        bool anyPlayers = false;
+        uint8_t lowest = EXPANSION_WOTLK;
+        uint8_t highest = EXPANSION_CLASSIC;
+        for (QueueEntry const& e : entries)
+        {
+            if (e.seasonal)
+                return true;
+            if (!e.hasPlayers)
+                continue;
+            anyPlayers = true;
+            lowest = std::min(lowest, e.lowestTier);
+            highest = std::max(highest, e.highestTier);
+        }
+
+        if (!anyPlayers)
+            return true;
+
+        uint8_t const cap = MaxLevelFor(s, s.botTier == BOT_TIER_HIGHEST ? highest : lowest);
+        if (!cap)
+            return true;
+
+        for (QueueEntry const& e : entries)
+            if (!e.hasPlayers && e.highestBotLevel > cap)
+                return false;
+        return true;
+    }
+
+    // --- players -------------------------------------------------------------
 
     // The expansion a level belongs to: up to and including 60 is vanilla, up
     // to and including 70 TBC, above that WotLK.

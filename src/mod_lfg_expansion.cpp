@@ -1,11 +1,15 @@
 /*
  * mod-lfg-expansion
  *
- * The Dungeon Finder never sends a player to a dungeon from an expansion they
- * have not reached.
+ * The Dungeon Finder stays inside the expansion a character has reached, in
+ * both directions:
  *
- * Random Classic stops at 58 and Random Burning Crusade starts at 59 in
- * LFGDungeons.dbc, so a level 59-60 is only offered TBC. For a vanilla
+ *   players      never get a dungeon from an expansion they have not reached
+ *   random bots  follow the real players' expansion: at most 60 with a
+ *                vanilla player, at most 70 with a TBC player (mod-playerbots)
+ *
+ * PLAYERS. Random Classic stops at 58 and Random Burning Crusade starts at 59
+ * in LFGDungeons.dbc, so a level 59-60 is only offered TBC. For a vanilla
  * character under mod-individual-progression that is worse than wrong: IP
  * turns it away at the entrance of every Outland instance.
  *
@@ -22,10 +26,30 @@
  * calls OnInitializeLockedDungeons for each dungeon; GetCompatibleDungeons()
  * removes the locked ones on join, also after a random dungeon is expanded.
  *
+ * RANDOM BOTS. mod-playerbots lets random bots queue for exactly the dungeons
+ * a real player is queued for (RandomPlayerbotMgr::CheckLfgQueue), and picks
+ * them by level alone. A level 55 dungeon takes bots up to 65.
+ *
+ * Which bot has to fit whom is only known when the queue builds a proposal,
+ * so the rule sits there: LFGQueue::CheckCompatibility asks GlobalScript's
+ * CanCreateLfgProposal right before the proposal is created, and a no skips
+ * the combination. That call runs in a map updater thread while maps update,
+ * so it touches no Player: every queue entry's expansion and bot level are
+ * stored on join, which runs in the world thread while no map updates --
+ * players because CMSG_LFG_JOIN is PROCESS_THREADUNSAFE, bots because
+ * PlayerbotHolder::HandleBotPackets is called from WorldScript::OnUpdate and
+ * from the master's SessionScript::OnSessionUpdate under ProcessUnsafe.
+ *
  * mod-individual-progression and mod-playerbots are optional. With IP, a
- * character's expansion is its IP tier; without it, its level. With
- * playerbots, random bots are left alone: they have no expansion of their own.
+ * character's expansion is its IP tier; without it, its level. Without
+ * playerbots there are no random bots, and the bot rule is not built.
  */
+
+#include <algorithm>
+#include <map>
+#include <mutex>
+#include <set>
+#include <vector>
 
 #include "Config.h"
 #include "Group.h"
@@ -115,6 +139,57 @@ namespace
             t_lockPass = { player->GetGUID(), level, PlayerExpansion(player, level) };
         return t_lockPass.expansion;
     }
+
+#ifdef LFGX_WITH_PLAYERBOTS
+    // Queue entries by LFG's queue guid (the group's, otherwise the player's).
+    // Written in the world thread on join and on level change in the map
+    // threads, read by the LFG queue in a map updater thread.
+    std::mutex g_queueMutex;
+    std::map<ObjectGuid, LfgExpansion::QueueEntry> g_queueEntries;
+
+    // Only called from JoinLfg in the world thread while no map updates, so
+    // every member of the group may be read, also those on other maps.
+    LfgExpansion::QueueEntry QueueEntryFor(Player* leader, std::set<uint32> const& dungeons)
+    {
+        LfgExpansion::QueueEntry entry;
+
+        entry.seasonal = !dungeons.empty() && std::all_of(dungeons.begin(), dungeons.end(), [](uint32 id)
+        {
+            lfg::LFGDungeonData const* dungeon = sLFGMgr->GetLFGDungeon(id);
+            return dungeon && dungeon->seasonal;
+        });
+
+        auto add = [&entry](Player* member)
+        {
+            uint8 const level = member->GetLevel();
+            if (IsRandomBot(member))
+            {
+                entry.highestBotLevel = std::max(entry.highestBotLevel, level);
+                return;
+            }
+            uint8 const expansion = PlayerExpansion(member, level);
+            entry.hasPlayers = true;
+            entry.lowestTier = std::min(entry.lowestTier, expansion);
+            entry.highestTier = std::max(entry.highestTier, expansion);
+        };
+
+        if (Group* group = leader->GetGroup())
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource())
+                    add(member);
+        }
+        else
+            add(leader);
+
+        return entry;
+    }
+
+    bool BotRuleActive()
+    {
+        return g_settings.enabled && g_settings.botLock;
+    }
+#endif
 }
 
 class LfgExpansionWorld : public WorldScript
@@ -136,15 +211,25 @@ public:
 #else
         char const* const ip = "not found";
 #endif
+
 #ifdef LFGX_WITH_PLAYERBOTS
-        char const* const playerbots = "found";
+        g_settings.botLock = sConfigMgr->GetOption<bool>("LfgExpansion.BotLock", true);
+
+        uint32 const botTier = sConfigMgr->GetOption<uint32>("LfgExpansion.BotTier", LfgExpansion::BOT_TIER_LOWEST);
+        if (botTier > LfgExpansion::BOT_TIER_HIGHEST)
+            LOG_ERROR("module", "LfgExpansion.BotTier = {} is invalid (0 or 1); using 0", botTier);
+        g_settings.botTier = botTier == LfgExpansion::BOT_TIER_HIGHEST ? LfgExpansion::BOT_TIER_HIGHEST : LfgExpansion::BOT_TIER_LOWEST;
+
+        char const* const bots = !g_settings.botLock ? "found, random bots not held"
+            : g_settings.botTier == LfgExpansion::BOT_TIER_HIGHEST ? "found, random bots follow the highest player expansion"
+            : "found, random bots follow the lowest player expansion";
 #else
-        char const* const playerbots = "not found";
+        char const* const bots = "not found";
 #endif
 
         LOG_INFO("module", "LfgExpansion: {} (vanilla up to level {}, TBC up to {}; individual progression {}, playerbots {})",
                  g_settings.enabled ? "enabled" : "disabled",
-                 g_settings.classicMaxLevel, g_settings.tbcMaxLevel, ip, playerbots);
+                 g_settings.classicMaxLevel, g_settings.tbcMaxLevel, ip, bots);
     }
 };
 
@@ -153,7 +238,10 @@ class LfgExpansionGlobal : public GlobalScript
 public:
     LfgExpansionGlobal() : GlobalScript("LfgExpansionGlobal", {
         GLOBALHOOK_ON_INITIALIZE_LOCKED_DUNGEONS,
-        GLOBALHOOK_ON_AFTER_INITIALIZE_LOCKED_DUNGEONS
+        GLOBALHOOK_ON_AFTER_INITIALIZE_LOCKED_DUNGEONS,
+#ifdef LFGX_WITH_PLAYERBOTS
+        GLOBALHOOK_CAN_CREATE_LFG_PROPOSAL,
+#endif
     }) { }
 
     void OnInitializeLockedDungeons(Player* player, uint8& level, uint32& lockData, lfg::LFGDungeonData const* dungeon) override
@@ -162,7 +250,8 @@ public:
         if (lockData || !dungeon || !player || !g_settings.enabled)
             return;
 
-        // Random bots have no expansion of their own.
+        // Random bots have no expansion of their own; they are held in the
+        // queue instead (see CanCreateLfgProposal).
         if (IsRandomBot(player))
             return;
 
@@ -180,13 +269,49 @@ public:
     {
         t_lockPass = {};
     }
+
+#ifdef LFGX_WITH_PLAYERBOTS
+    // LFGQueue::CheckCompatibility, right before a full proposal is created. A
+    // no skips the combination; the bot stays in the queue for another group.
+    // Runs in a map updater thread: only the stored queue entries are read.
+    bool CanCreateLfgProposal(lfg::Lfg5Guids const& guids) override
+    {
+        if (!BotRuleActive())
+            return true;
+
+        std::vector<LfgExpansion::QueueEntry> entries;
+        entries.reserve(guids.guids.size());
+        {
+            std::lock_guard<std::mutex> lock(g_queueMutex);
+            for (ObjectGuid const& guid : guids.guids)
+            {
+                if (guid.IsEmpty())
+                    continue;
+                auto it = g_queueEntries.find(guid);
+                if (it != g_queueEntries.end())
+                    entries.push_back(it->second);
+            }
+        }
+
+        if (LfgExpansion::IsProposalAllowed(g_settings, entries))
+            return true;
+
+        LOG_DEBUG("module", "LfgExpansion: proposal {} rejected, a random bot is above the players' expansion", guids.toString());
+        return false;
+    }
+#endif
 };
 
 class LfgExpansionPlayer : public PlayerScript
 {
 public:
     LfgExpansionPlayer() : PlayerScript("LfgExpansionPlayer", {
-        PLAYERHOOK_ON_QUEUE_RANDOM_DUNGEON
+        PLAYERHOOK_ON_QUEUE_RANDOM_DUNGEON,
+#ifdef LFGX_WITH_PLAYERBOTS
+        PLAYERHOOK_CAN_JOIN_LFG,
+        PLAYERHOOK_ON_LEVEL_CHANGED,
+        PLAYERHOOK_ON_LOGOUT,
+#endif
     }) { }
 
     // Called in LFGMgr::JoinLfg with the player who queues -- the group
@@ -197,6 +322,8 @@ public:
         if (!player || !g_settings.enabled)
             return;
 
+        // Random bots queue by level and are held in the queue
+        // (CanCreateLfgProposal).
         if (IsRandomBot(player))
             return;
 
@@ -220,11 +347,87 @@ public:
                  player->GetName(), player->GetLevel(), rDungeonId, swapped, groupExpansion);
         rDungeonId = swapped;
     }
+
+#ifdef LFGX_WITH_PLAYERBOTS
+    // First in LFGMgr::JoinLfg, with the player who queues -- the group
+    // leader, if there is a group. Random bots come here too (they send
+    // CMSG_LFG_JOIN, which HandleBotPackets runs in the world thread).
+    bool OnPlayerCanJoinLfg(Player* player, uint8 /*roles*/, std::set<uint32>& dungeons, std::string const& /*comment*/) override
+    {
+        if (!player)
+            return true;
+
+        Group* group = player->GetGroup();
+        ObjectGuid const key = group ? group->GetGUID() : player->GetGUID();
+
+        // An entry from before BotLock was reloaded to 0 must not be read
+        // again if it is reloaded back to 1.
+        if (!BotRuleActive())
+        {
+            std::lock_guard<std::mutex> lock(g_queueMutex);
+            g_queueEntries.erase(key);
+            return true;
+        }
+
+        LfgExpansion::QueueEntry const entry = QueueEntryFor(player, dungeons);
+
+        std::lock_guard<std::mutex> lock(g_queueMutex);
+        g_queueEntries[key] = entry;
+        return true;
+    }
+
+    // A random bot can be randomized while it is in the queue.
+    void OnPlayerLevelChanged(Player* player, uint8 /*oldLevel*/) override
+    {
+        if (!player || !IsRandomBot(player))
+            return;
+
+        Group* group = player->GetGroup();
+        ObjectGuid const key = group ? group->GetGUID() : player->GetGUID();
+        uint8 const level = player->GetLevel();
+
+        std::lock_guard<std::mutex> lock(g_queueMutex);
+        auto it = g_queueEntries.find(key);
+        if (it == g_queueEntries.end())
+            return;
+        // Only the bot's own level is known here, not the rest of the group's.
+        it->second.highestBotLevel = group ? std::max(it->second.highestBotLevel, level) : level;
+    }
+
+    void OnPlayerLogout(Player* player) override
+    {
+        if (!player)
+            return;
+        std::lock_guard<std::mutex> lock(g_queueMutex);
+        g_queueEntries.erase(player->GetGUID());
+    }
+#endif
 };
+
+#ifdef LFGX_WITH_PLAYERBOTS
+class LfgExpansionGroup : public GroupScript
+{
+public:
+    LfgExpansionGroup() : GroupScript("LfgExpansionGroup", {
+        GROUPHOOK_ON_DISBAND
+    }) { }
+
+    void OnDisband(Group* group) override
+    {
+        if (!group)
+            return;
+        std::lock_guard<std::mutex> lock(g_queueMutex);
+        g_queueEntries.erase(group->GetGUID());
+    }
+};
+#endif
 
 void AddLfgExpansionScripts()
 {
     new LfgExpansionWorld();
     new LfgExpansionGlobal();
     new LfgExpansionPlayer();
+#ifdef LFGX_WITH_PLAYERBOTS
+    new LfgExpansionGroup();
+#endif
 }

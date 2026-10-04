@@ -9,6 +9,9 @@ config switch when some of your players are in vanilla and others in TBC.
   *Random Classic*.
 - **Specific dungeons** from a later expansion are shown as locked
   (`LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION`).
+- With [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots),
+  **random bots** follow the real players' expansion: a vanilla player is not
+  grouped with level 61-65 bots in Stratholme.
 
 Works on its own (a character's expansion is its level) and together with
 [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression)
@@ -85,6 +88,41 @@ checked, so they are covered.
 A dungeon's expansion is the `ExpansionLevel` column of `LFGDungeons.dbc`, not
 its level range: Stratholme is vanilla even though its range reaches above 60.
 
+### Random bots follow the players (mod-playerbots)
+
+Playerbots lets random bots queue for exactly the dungeons a real player is
+queued for (`RandomPlayerbotMgr::CheckLfgQueue`), and picks them by level
+alone: up to `MinLevel + 10` for a specific dungeon. A level 60 in Stratholme
+gets bots up to 65.
+
+Which bot has to fit whom is only known when the queue builds a proposal, so
+the rule sits there. `LFGQueue::CheckCompatibility` calls the
+`CanCreateLfgProposal` global hook right before a full proposal is created,
+and a no skips that combination; the bot stays in the queue for another
+group.
+
+1. On join (`OnPlayerCanJoinLfg`) every queue entry -- a player alone or a
+   group -- is stored with the lowest and highest expansion among its real
+   players and the level of its highest random bot.
+2. In the proposal, random bots in an entry without a real player may be at
+   most the cap of the players' expansion: 60 for vanilla, 70 for TBC, no cap
+   for WotLK. With players in different expansions, `BotTier` picks the lowest
+   (default) or the highest.
+3. A random bot you invited into your own group is your choice and is not
+   checked. Seasonal bosses (listed as vanilla/TBC but level 78-82) are
+   exempt.
+
+The proposal hook runs in a map updater thread while maps update, so it only
+reads the stored entries and never a `Player`. They are written on join, which
+runs in the world thread while no map updates (players because
+`CMSG_LFG_JOIN` is `PROCESS_THREADUNSAFE`, bots because playerbots handles
+their packets from `WorldScript::OnUpdate` and the master's session update).
+A random bot that is randomized while queued updates its entry on level
+change.
+
+This is independent of playerbots' own level rules: it decides which of the
+bots playerbots already queued may join a given group.
+
 ## A character's expansion
 
 | Account | Expansion |
@@ -113,9 +151,10 @@ which were found.
 - **mod-individual-progression** (`IndividualProgression.h`): the IP tier
   decides, as above.
 - **mod-playerbots** (`PlayerbotAIConfig.h`): random bots (accounts in
-  `randomBotAccounts`) are never locked or counted -- they have no expansion
-  of their own. Your own altbots count like players. Which bots playerbots
-  sends to a queue is playerbots' own decision.
+  `randomBotAccounts`) are never locked themselves -- they have no expansion
+  of their own -- but follow the players' expansion in the queue, as above.
+  Your own altbots count like players. Without playerbots the bot rule is not
+  built.
 
 A module that is present in `modules/` but disabled in CMake still has its
 header found, and the build then fails at link time. Remove the directory
@@ -132,9 +171,12 @@ instead.
    config directory (the defaults also apply without it).
 
 `Server.log` after start:
-`LfgExpansion: enabled (vanilla up to level 60, TBC up to 70; individual progression found, playerbots not found)`,
+`LfgExpansion: enabled (vanilla up to level 60, TBC up to 70; individual progression found, playerbots found, random bots follow the lowest player expansion)`,
 and for every swapped queue
 `LfgExpansion: <name> (level 60) queues random 259 -> 258 (group expansion 0)`.
+
+With playerbots, a rejected proposal is logged at debug level
+(`LfgExpansion: proposal … rejected, a random bot is above the players' expansion`).
 
 To check in game as a vanilla level 60: pick Random Burning Crusade; the queue
 should read Random Classic and the dungeon should be vanilla. Hellfire
@@ -145,8 +187,10 @@ Ramparts should show as locked under Specific Dungeons.
 | Key | Default | |
 |---|---|---|
 | `LfgExpansion.Enable` | 1 | enable the module |
-| `LfgExpansion.ClassicMaxLevel` | 60 | highest vanilla level for a character without an IP tier |
-| `LfgExpansion.TbcMaxLevel` | 70 | highest TBC level for a character without an IP tier |
+| `LfgExpansion.ClassicMaxLevel` | 60 | highest vanilla level for a character without an IP tier, and the bot cap when the players are vanilla |
+| `LfgExpansion.TbcMaxLevel` | 70 | highest TBC level for a character without an IP tier, and the bot cap when the players are TBC |
+| `LfgExpansion.BotLock` | 1 | with playerbots: random bots follow the real players' expansion |
+| `LfgExpansion.BotTier` | 0 | with playerbots: players in different expansions; 0 = bots follow the lowest, 1 = the highest |
 
 ## Tests
 

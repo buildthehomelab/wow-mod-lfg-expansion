@@ -10,16 +10,50 @@
 #                     on queue for the group's own (a level 60 who picks
 #                     Random Burning Crusade queues for Random Classic), and
 #                     specific dungeons from a later expansion are shown as
-#                     locked.
+#                     locked. 0 also turns off the random bot rule below.
 #        Default:     1 (enabled)
 #
 
 LfgExpansion.Enable = 1
 
 #
+#    LfgExpansion.BotLock
+#        Description: Only with mod-playerbots. Random bots follow the
+#                     expansion of the real players they are grouped with, not
+#                     their own level: at most ClassicMaxLevel when that is
+#                     vanilla, at most TbcMaxLevel when it is TBC, no cap when
+#                     it is WotLK. With players in different expansions,
+#                     BotTier picks which one counts. A player's expansion is
+#                     the same as above. Checked when the Dungeon Finder
+#                     builds a group; a bot that does not fit stays in the
+#                     queue. A random bot is an account in playerbots'
+#                     randomBotAccounts; your own altbots and random bots you
+#                     invited yourself are left alone. The seasonal bosses are
+#                     exempt.
+#        Default:     1 (enabled)
+#
+
+LfgExpansion.BotLock = 1
+
+#
+#    LfgExpansion.BotTier
+#        Description: Only with mod-playerbots. Which expansion random bots
+#                     follow when the real players in the group are in
+#                     different ones.
+#                     0 = the lowest (a vanilla and a TBC player get bots up to
+#                         and including 60)
+#                     1 = the highest (the same pair gets bots up to and
+#                         including 70)
+#        Default:     0
+#
+
+LfgExpansion.BotTier = 0
+
+#
 #    LfgExpansion.ClassicMaxLevel
 #        Description: Highest level in vanilla. A character without an IP tier
-#                     is vanilla up to and including this level.
+#                     is vanilla up to and including this level, and random
+#                     bots are capped here when the players are vanilla.
 #        Default:     60
 #
 
@@ -28,7 +62,8 @@ LfgExpansion.ClassicMaxLevel = 60
 #
 #    LfgExpansion.TbcMaxLevel
 #        Description: Highest level in TBC. A character without an IP tier is
-#                     TBC up to and including this level, WotLK above it.
+#                     TBC up to and including this level, WotLK above it, and
+#                     random bots are capped here when the players are TBC.
 #        Default:     70
 #
 
