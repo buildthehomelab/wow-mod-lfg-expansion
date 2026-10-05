@@ -261,8 +261,11 @@ public:
         if (isRandomEntry || dungeon->expansion <= LfgExpansion::ExpansionForLevel(g_settings, level))
             return;
 
+        // "You have not completed the required quest", not the expansion reason: the client
+        // reads LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION as "you don't own The Burning Crusade",
+        // which is wrong on a realm where everyone has the expansion and the era is earned.
         if (LfgExpansion::IsPlayerLocked(g_settings, PlayerExpansionForLockPass(player, level), dungeon->expansion, isRandomEntry))
-            lockData = lfg::LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION;
+            lockData = lfg::LFG_LOCKSTATUS_QUEST_NOT_COMPLETED;
     }
 
     void OnAfterInitializeLockedDungeons(Player* /*player*/) override

@@ -8,7 +8,7 @@ config switch when some of your players are in vanilla and others in TBC.
   group's own: a level 60 who picks *Random Burning Crusade* queues for
   *Random Classic*.
 - **Specific dungeons** from a later expansion are shown as locked
-  (`LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION`).
+  (`LFG_LOCKSTATUS_QUEST_NOT_COMPLETED`).
 - With [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots),
   **random bots** follow the real players' expansion: a vanilla player is not
   grouped with level 61-65 bots in Stratholme.
@@ -77,9 +77,12 @@ last row when the level is above the table's highest `maxLevel`.
 `LFGMgr::InitializeLockedDungeons()` works out every character's locked
 dungeons on login and on every level change, and calls
 `OnInitializeLockedDungeons` for each dungeon. A specific dungeon from a later
-expansion than the player's gets `LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION`, and
-the client shows it as locked. The random entries are **not** locked -- a
-locked random is greyed out, and then the swap above could never happen.
+expansion than the player's gets `LFG_LOCKSTATUS_QUEST_NOT_COMPLETED`, and
+the client shows it as locked with "You have not completed the required
+quest". The expansion reason would read "you don't own The Burning Crusade",
+which is wrong when every account has the expansion and the era is earned.
+The random entries are **not** locked -- a locked random is greyed out, and
+then the swap above could never happen.
 
 On join, `GetCompatibleDungeons()` removes locked dungeons, so matchmaking can
 never place anyone in them. Random pools are expanded before the locks are
