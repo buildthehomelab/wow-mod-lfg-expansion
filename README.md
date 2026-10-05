@@ -17,6 +17,15 @@ Works on its own (a character's expansion is its level) and together with
 [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression)
 (a character's expansion is its progression tier).
 
+## Patch Notes: Era-Bound Dungeon Finder
+
+Category: Dungeons
+
+- The **Dungeon Finder** now follows your progression. Dungeons from an era you haven't reached are locked.
+- At level 59 and 60, choosing **Random Burning Crusade Dungeon** while still in the classic era puts you in the queue for a **Random Classic Dungeon** instead.
+- Groups queue for the era of their least-progressed member.
+- Players you're matched with in the Dungeon Finder are never above the level cap of your era.
+
 ## Why
 
 From the client's own `LFGDungeons.dbc`:
