@@ -165,7 +165,7 @@ instead.
 1. Clone into `modules/` of your AzerothCore source tree and rebuild:
    ```bash
    cd azerothcore-wotlk/modules
-   git clone https://github.com/MekBits/mod-lfg-expansion.git
+   git clone https://github.com/buildthehomelab/wow-mod-lfg-expansion.git mod-lfg-expansion
    ```
 2. Copy `conf/mod_lfg_expansion.conf.dist` to `mod_lfg_expansion.conf` in your
    config directory (the defaults also apply without it).
@@ -200,6 +200,10 @@ Ramparts should show as locked under Specific Dungeons.
 
 Needs only g++ and tests the rules. The `core-build` workflow compiles the
 module against AzerothCore.
+
+## Credits
+
+Originally written by [MekBits](https://github.com/MekBits/mod-lfg-expansion); this repository is a fork of it.
 
 ## License
 
