@@ -14,4 +14,4 @@ jobs:
   build:
     uses: azerothcore/reusable-workflows/.github/workflows/core_build_modules.yml@main
     with:
-      module_repo: ${{ github.event.repository.name }}
+      module_repo: mod-lfg-expansion   # the module folder is mod-lfg-expansion; the repo name carries a wow- prefix
