@@ -10,6 +10,11 @@ on:
       - 'main'
   workflow_dispatch:
 
+# A newer push to the same pull request or branch cancels the older run still queued or running
+concurrency:
+  group: core-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     uses: azerothcore/reusable-workflows/.github/workflows/core_build_modules.yml@main
